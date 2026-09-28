@@ -5,10 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Scaledrone WebRTC Audio Streamer</title>
 
-  <script
-    type="text/javascript"
-    src="https://cdn.scaledrone.com/scaledrone.min.js">
-  </script>
+  <!-- Fixed spacing in the script tag to ensure it loads properly -->
+  <script type="text/javascript" src="https://cdn.scaledrone.com/scaledrone.min.js"></script>
 
   <style>
     * {
@@ -188,20 +186,13 @@
   <!-- Role selection -->
   <div id="selection-view" class="container">
     <h2>Audio Stream</h2>
-    <p>
-      Choose whether this device sends microphone audio or listens to a microphone.
-    </p>
+    <p>Choose whether this device sends microphone audio or listens to a microphone.</p>
 
     <button id="mic-mode-btn">🎤 Mic (Transmitter)</button>
     <button id="listener-mode-btn">🔊 Listener (Receiver)</button>
 
-    <div id="startup-status" class="status">
-      Ready.
-    </div>
-
-    <div class="tiny">
-      WebRTC audio + Scaledrone signaling
-    </div>
+    <div id="startup-status" class="status">Ready.</div>
+    <div class="tiny">WebRTC audio + Scaledrone signaling</div>
   </div>
 
   <!-- Mic view -->
@@ -222,17 +213,9 @@
       <div class="status">Connecting to Scaledrone...</div>
     </div>
 
-    <div id="connection-status" class="status">
-      Not connected
-    </div>
+    <div id="connection-status" class="status">Not connected</div>
 
-    <audio
-      id="remoteAudio"
-      autoplay
-      playsinline
-      controls>
-    </audio>
-
+    <audio id="remoteAudio" autoplay playsinline controls></audio>
     <div id="listener-log" class="log hidden"></div>
   </div>
 
@@ -240,15 +223,11 @@
     "use strict";
 
     // ============================================================
-    // SCALEDROME SETTINGS
+    // SCALEDRONE SETTINGS
     // ============================================================
-
     const CHANNEL_ID = "Sw5scfH0QXEhMUkf";
     const ROOM_NAME = "observable-audio-room";
 
-    // Public STUN servers.
-    // STUN helps WebRTC find a direct route between devices.
-    // Some networks may still require TURN for guaranteed connectivity.
     const RTC_CONFIGURATION = {
       iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
@@ -261,42 +240,30 @@
     // ============================================================
     // APP STATE
     // ============================================================
-
     let role = null;
     let drone = null;
     let room = null;
-
     let localStream = null;
-
-    // Listener's current connection.
     let listenerPC = null;
     let listenerTargetId = null;
     let listenerPendingCandidates = [];
-
-    // Mic's connection to the current listener.
     let micPC = null;
     let micTargetId = null;
     let micPendingCandidates = [];
-
     let roomMembers = [];
 
     // ============================================================
     // ELEMENTS
     // ============================================================
-
     const selectionView = document.getElementById("selection-view");
     const micView = document.getElementById("mic-view");
     const listenerView = document.getElementById("listener-view");
-
     const micModeBtn = document.getElementById("mic-mode-btn");
     const listenerModeBtn = document.getElementById("listener-mode-btn");
-
     const startupStatus = document.getElementById("startup-status");
-
     const micNameElement = document.getElementById("mic-name");
     const micStatus = document.getElementById("mic-status");
     const micLog = document.getElementById("mic-log");
-
     const deviceList = document.getElementById("device-list");
     const connectionStatus = document.getElementById("connection-status");
     const remoteAudio = document.getElementById("remoteAudio");
@@ -305,39 +272,27 @@
     // ============================================================
     // LOGGING / STATUS
     // ============================================================
-
     function log(message, error = false) {
       const time = new Date().toLocaleTimeString();
-
-      console.log(
-        `[${time}] ${message}`,
-        error ? "ERROR" : ""
-      );
-
+      console.log(`[${time}] ${message}`, error ? "ERROR" : "");
       const target = role === "mic" ? micLog : listenerLog;
 
       if (target) {
         target.classList.remove("hidden");
-
         const line = `[${time}] ${message}`;
         target.textContent += (target.textContent ? "\n" : "") + line;
-
         target.scrollTop = target.scrollHeight;
       }
     }
 
-    function setStatus(element, message, type = "") {
+    function setStatus(element, message, type) {
       element.textContent = message;
       element.className = "status";
-
-      if (type) {
-        element.classList.add(type);
-      }
+      if (type) element.classList.add(type);
     }
 
     function showFatalError(message) {
       console.error(message);
-
       if (role === "mic") {
         setStatus(micStatus, message, "error");
         log(message, true);
@@ -350,22 +305,18 @@
     // ============================================================
     // ROLE SELECTION
     // ============================================================
-
-    micModeBtn.addEventListener("click", () => {
+    micModeBtn.addEventListener("click", function() {
       startMode("mic");
     });
 
-    listenerModeBtn.addEventListener("click", () => {
+    listenerModeBtn.addEventListener("click", function() {
       startMode("listener");
     });
 
     function startMode(selectedRole) {
-      if (role) {
-        return;
-      }
+      if (role) return;
 
       role = selectedRole;
-
       selectionView.classList.add("hidden");
 
       if (role === "mic") {
@@ -381,23 +332,22 @@
     // ============================================================
     // SCALEDRONE
     // ============================================================
-
     function initDrone(userData) {
-      setStatus(
-        role === "mic" ? micStatus : startupStatus,
-        "Connecting to Scaledrone..."
-      );
+      setStatus(role === "mic" ? micStatus : startupStatus, "Connecting to Scaledrone...");
+
+      if (typeof ScaleDrone === 'undefined') {
+        showFatalError("Scaledrone SDK failed to load. Check your network or adblocker.");
+        return;
+      }
 
       try {
-        drone = new ScaleDrone(CHANNEL_ID, {
-          data: userData
-        });
+        drone = new ScaleDrone(CHANNEL_ID, { data: userData });
       } catch (error) {
         showFatalError("Could not create Scaledrone connection: " + error.message);
         return;
       }
 
-      drone.on("open", (error) => {
+      drone.on("open", function(error) {
         if (error) {
           showFatalError("Scaledrone connection failed: " + formatError(error));
           return;
@@ -408,116 +358,76 @@
         try {
           room = drone.subscribe(ROOM_NAME);
         } catch (subscribeError) {
-          showFatalError(
-            "Could not subscribe to room: " + subscribeError.message
-          );
+          showFatalError("Could not subscribe to room: " + subscribeError.message);
           return;
         }
 
-        room.on("open", (roomError) => {
+        room.on("open", function(roomError) {
           if (roomError) {
-            showFatalError(
-              "Room connection failed: " + formatError(roomError)
-            );
+            showFatalError("Room connection failed: " + formatError(roomError));
             return;
           }
 
           log("Joined " + ROOM_NAME);
 
           if (role === "mic") {
-            setStatus(
-              micStatus,
-              "Mic is online. Waiting for a listener...",
-              "good"
-            );
+            setStatus(micStatus, "Mic is online. Waiting for a listener...", "good");
           } else {
-            setStatus(
-              connectionStatus,
-              "Connected. Looking for microphones...",
-              "good"
-            );
+            setStatus(connectionStatus, "Connected. Looking for microphones...", "good");
           }
         });
 
-        // IMPORTANT:
-        // Scaledrone's current API uses the "message" event.
-        room.on("message", (message) => {
+        room.on("message", function(message) {
           handleSignalingMessage(message);
         });
 
-        room.on("members", (members) => {
+        room.on("members", function(members) {
           roomMembers = Array.isArray(members) ? members : [];
-
           log("Members received: " + roomMembers.length);
-
-          if (role === "listener") {
-            renderDeviceList();
-          }
+          if (role === "listener") renderDeviceList();
         });
 
-        room.on("member_join", (member) => {
-          roomMembers = roomMembers.filter((m) => m.id !== member.id);
+        room.on("member_join", function(member) {
+          roomMembers = roomMembers.filter(function(m) { return m.id !== member.id; });
           roomMembers.push(member);
 
-          log(
-            "Member joined: " +
-            (member.clientData?.name || member.id)
-          );
+          const memberName = (member.clientData && member.clientData.name) ? member.clientData.name : member.id;
+          log("Member joined: " + memberName);
 
-          if (role === "listener") {
-            renderDeviceList();
-          }
+          if (role === "listener") renderDeviceList();
         });
 
-        room.on("member_leave", (member) => {
-          roomMembers = roomMembers.filter((m) => m.id !== member.id);
+        room.on("member_leave", function(member) {
+          roomMembers = roomMembers.filter(function(m) { return m.id !== member.id; });
 
-          log(
-            "Member left: " +
-            (member.clientData?.name || member.id)
-          );
+          const memberName = (member.clientData && member.clientData.name) ? member.clientData.name : member.id;
+          log("Member left: " + memberName);
 
-          if (
-            role === "listener" &&
-            member.id === listenerTargetId
-          ) {
+          if (role === "listener" && member.id === listenerTargetId) {
             closeListenerConnection();
-
-            setStatus(
-              connectionStatus,
-              "Selected microphone disconnected.",
-              "warn"
-            );
+            setStatus(connectionStatus, "Selected microphone disconnected.", "warn");
           }
 
-          if (
-            role === "mic" &&
-            member.id === micTargetId
-          ) {
+          if (role === "mic" && member.id === micTargetId) {
             closeMicConnection();
           }
 
-          if (role === "listener") {
-            renderDeviceList();
-          }
+          if (role === "listener") renderDeviceList();
         });
 
-        drone.on("error", (error) => {
-          log(
-            "Scaledrone error: " + formatError(error),
-            true
-          );
+        drone.on("error", function(error) {
+          log("Scaledrone error: " + formatError(error), true);
         });
 
-        drone.on("disconnect", () => {
+        drone.on("disconnect", function() {
           log("Scaledrone disconnected. Trying to reconnect...");
         });
 
-        drone.on("reconnect", () => {
+        drone.on("reconnect", function() {
           log("Scaledrone reconnected.");
         });
 
-        drone.on("close", () => {
+        drone.on("close", function() {
           log("Scaledrone connection closed.", true);
         });
       } catch (error) {
@@ -527,18 +437,11 @@
 
     function formatError(error) {
       if (!error) return "Unknown error";
-
-      if (typeof error === "string") {
-        return error;
-      }
-
-      if (error.message) {
-        return error.message;
-      }
-
+      if (typeof error === "string") return error;
+      if (error.message) return error.message;
       try {
         return JSON.stringify(error);
-      } catch {
+      } catch (e) {
         return String(error);
       }
     }
@@ -548,7 +451,6 @@
         log("Cannot send signaling message: Scaledrone is not ready.", true);
         return;
       }
-
       if (!targetId) {
         log("Cannot send signaling message: target is missing.", true);
         return;
@@ -556,25 +458,18 @@
 
       drone.publish({
         room: ROOM_NAME,
-        message: {
-          ...message,
-          target: targetId
-        }
+        message: Object.assign({}, message, { target: targetId })
       });
     }
 
     // ============================================================
     // MICROPHONE MODE
     // ============================================================
-
     async function initMic() {
       micNameElement.textContent = "Requesting microphone permission...";
 
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        showFatalError(
-          "This browser/viewer does not provide microphone access. " +
-          "Try opening the page in a normal browser over HTTPS."
-        );
+        showFatalError("This browser/viewer does not provide microphone access. Try opening the page in a secure (HTTPS) browser.");
         return;
       }
 
@@ -588,18 +483,9 @@
           video: false
         });
 
-        const micName =
-          "Mic " +
-          Math.floor(1000 + Math.random() * 9000);
-
+        const micName = "Mic " + Math.floor(1000 + Math.random() * 9000);
         micNameElement.textContent = micName;
-
-        setStatus(
-          micStatus,
-          "Microphone is working. Connecting to Scaledrone...",
-          "good"
-        );
-
+        setStatus(micStatus, "Microphone is working. Connecting to Scaledrone...", "good");
         log("Microphone permission granted.");
 
         initDrone({
@@ -609,20 +495,15 @@
 
       } catch (error) {
         let message = "Microphone access failed.";
-
         if (error && error.name === "NotAllowedError") {
-          message =
-            "Microphone permission was denied. Allow microphone access and reload the page.";
+          message = "Microphone permission was denied. Allow microphone access and reload the page.";
         } else if (error && error.name === "NotFoundError") {
-          message =
-            "No microphone was found on this device.";
+          message = "No microphone was found on this device.";
         } else if (error && error.name === "SecurityError") {
-          message =
-            "The browser blocked microphone access for security reasons. Use HTTPS or a supported local browser context.";
+          message = "The browser blocked microphone access for security reasons. Use HTTPS.";
         } else if (error && error.message) {
           message += " " + error.message;
         }
-
         showFatalError(message);
       }
     }
@@ -636,22 +517,15 @@
           micPC.onicecandidate = null;
           micPC.ontrack = null;
           micPC.close();
-        } catch {}
-
+        } catch (e) {}
         micPC = null;
       }
-
-      setStatus(
-        micStatus,
-        "Mic is online. Waiting for a listener...",
-        "good"
-      );
+      setStatus(micStatus, "Mic is online. Waiting for a listener...", "good");
     }
 
     // ============================================================
     // LISTENER MODE
     // ============================================================
-
     function initListener() {
       initDrone({
         name: "Listener",
@@ -662,12 +536,8 @@
     function renderDeviceList() {
       deviceList.innerHTML = "";
 
-      const mics = roomMembers.filter((member) => {
-        return (
-          member &&
-          member.clientData &&
-          member.clientData.type === "mic"
-        );
+      const mics = roomMembers.filter(function(member) {
+        return member && member.clientData && member.clientData.type === "mic";
       });
 
       if (mics.length === 0) {
@@ -678,22 +548,19 @@
         return;
       }
 
-      mics.forEach((mic) => {
+      mics.forEach(function(mic) {
         const button = document.createElement("button");
-
         button.type = "button";
         button.className = "device-btn";
-
+        
         if (mic.id === listenerTargetId) {
           button.classList.add("active");
         }
 
-        const micName =
-          mic.clientData?.name || "Unnamed microphone";
-
+        const micName = (mic.clientData && mic.clientData.name) ? mic.clientData.name : "Unnamed microphone";
         button.textContent = "🎤 " + micName;
 
-        button.addEventListener("click", () => {
+        button.addEventListener("click", function() {
           connectToMic(mic.id, micName);
         });
 
@@ -702,530 +569,231 @@
     }
 
     async function connectToMic(targetId, name) {
-      // Close any old listener connection first.
       closeListenerConnection();
-
       listenerTargetId = targetId;
-
-      setStatus(
-        connectionStatus,
-        "Connecting to " + name + "...",
-        "warn"
-      );
-
+      setStatus(connectionStatus, "Connecting to " + name + "...", "warn");
       log("Starting listener connection to " + name);
 
-      listenerPC = new RTCPeerConnection(
-        RTC_CONFIGURATION
-      );
+      listenerPC = new RTCPeerConnection(RTC_CONFIGURATION);
+      listenerPC.addTransceiver("audio", { direction: "recvonly" });
 
-      listenerPC.addTransceiver("audio", {
-        direction: "recvonly"
-      });
-
-      listenerPC.onicecandidate = (event) => {
+      listenerPC.onicecandidate = function(event) {
         if (event.candidate) {
-          sendMessage(
-            {
-              type: "ice-candidate",
-              candidate: event.candidate
-            },
-            targetId
-          );
+          sendMessage({
+            type: "ice-candidate",
+            candidate: event.candidate
+          }, targetId);
         }
       };
 
-      listenerPC.ontrack = async (event) => {
+      listenerPC.ontrack = async function(event) {
         log("Remote audio track received.");
-
         if (event.streams && event.streams[0]) {
           remoteAudio.srcObject = event.streams[0];
         } else {
-          remoteAudio.srcObject =
-            new MediaStream([event.track]);
+          remoteAudio.srcObject = new MediaStream([event.track]);
         }
 
         try {
           await remoteAudio.play();
-
-          setStatus(
-            connectionStatus,
-            "Streaming live from " + name,
-            "good"
-          );
+          setStatus(connectionStatus, "Streaming live from " + name, "good");
         } catch (error) {
-          setStatus(
-            connectionStatus,
-            "Connected. Tap the play button to start audio.",
-            "warn"
-          );
-
-          log(
-            "Autoplay was blocked: " +
-            formatError(error)
-          );
+          setStatus(connectionStatus, "Connected. Tap the play button to start audio.", "warn");
+          log("Autoplay was blocked: " + formatError(error));
         }
       };
 
-      listenerPC.onconnectionstatechange = () => {
-        const state = listenerPC?.connectionState;
-
+      listenerPC.onconnectionstatechange = function() {
+        const state = listenerPC ? listenerPC.connectionState : null;
         log("Listener WebRTC state: " + state);
 
         if (state === "connected") {
-          setStatus(
-            connectionStatus,
-            "WebRTC connected. Waiting for audio...",
-            "good"
-          );
+          setStatus(connectionStatus, "WebRTC connected. Waiting for audio...", "good");
         }
-
         if (state === "failed") {
-          setStatus(
-            connectionStatus,
-            "WebRTC connection failed. Try selecting the mic again.",
-            "error"
-          );
+          setStatus(connectionStatus, "WebRTC connection failed. Try selecting the mic again.", "error");
         }
-
         if (state === "disconnected") {
-          setStatus(
-            connectionStatus,
-            "WebRTC disconnected.",
-            "warn"
-          );
+          setStatus(connectionStatus, "WebRTC disconnected.", "warn");
         }
-      };
-
-      listenerPC.oniceconnectionstatechange = () => {
-        log(
-          "Listener ICE state: " +
-          listenerPC?.iceConnectionState
-        );
       };
 
       try {
         const offer = await listenerPC.createOffer();
-
         await listenerPC.setLocalDescription(offer);
 
-        sendMessage(
-          {
-            type: "sdp-offer",
-            sdp: listenerPC.localDescription
-          },
-          targetId
-        );
-
+        sendMessage({
+          type: "sdp-offer",
+          sdp: listenerPC.localDescription
+        }, targetId);
         log("Offer sent to microphone.");
 
       } catch (error) {
-        showFatalError(
-          "Could not create WebRTC offer: " +
-          formatError(error)
-        );
-
+        showFatalError("Could not create WebRTC offer: " + formatError(error));
         closeListenerConnection();
       }
     }
 
     function closeListenerConnection() {
       listenerPendingCandidates = [];
-
       if (listenerPC) {
         try {
           listenerPC.onicecandidate = null;
           listenerPC.ontrack = null;
           listenerPC.close();
-        } catch {}
-
+        } catch (e) {}
         listenerPC = null;
       }
-
       remoteAudio.srcObject = null;
     }
 
     // ============================================================
     // SIGNALING
     // ============================================================
-
     async function handleSignalingMessage(messageEnvelope) {
-      // Scaledrone "message" events contain the actual payload in .data
-      // and the sender in .member.
-      const message = messageEnvelope?.data ?? messageEnvelope;
-      const sender = messageEnvelope?.member;
+      const message = (messageEnvelope && messageEnvelope.data) ? messageEnvelope.data : messageEnvelope;
+      const sender = (messageEnvelope && messageEnvelope.member) ? messageEnvelope.member : null;
 
-      if (!message || typeof message !== "object") {
-        return;
-      }
+      if (!message || typeof message !== "object") return;
+      if (sender && drone && sender.id === drone.clientId) return;
+      if (message.target && drone && message.target !== drone.clientId) return;
 
-      // Ignore our own signaling messages.
-      if (sender && drone && sender.id === drone.clientId) {
-        return;
-      }
-
-      // Only accept messages intended for this client.
-      if (
-        message.target &&
-        drone &&
-        message.target !== drone.clientId
-      ) {
-        return;
-      }
-
-      const senderId =
-        sender?.id || message.senderId || null;
-
-      // ------------------------------------------------------------
-      // MIC RECEIVES OFFER / ICE
-      // ------------------------------------------------------------
+      const senderId = (sender && sender.id) ? sender.id : (message.senderId ? message.senderId : null);
 
       if (role === "mic") {
-        if (
-          message.type === "sdp-offer" &&
-          message.sdp
-        ) {
-          await handleMicOffer(
-            message.sdp,
-            senderId
-          );
-
+        if (message.type === "sdp-offer" && message.sdp) {
+          await handleMicOffer(message.sdp, senderId);
           return;
         }
-
-        if (
-          message.type === "ice-candidate" &&
-          message.candidate
-        ) {
-          await handleMicIceCandidate(
-            message.candidate
-          );
-
+        if (message.type === "ice-candidate" && message.candidate) {
+          await handleMicIceCandidate(message.candidate);
           return;
-        }
-
-        // Compatibility with the old message shape.
-        if (
-          message.sdp &&
-          message.sdp.type === "offer"
-        ) {
-          await handleMicOffer(
-            message.sdp,
-            senderId
-          );
-
-          return;
-        }
-
-        if (
-          message.candidate
-        ) {
-          await handleMicIceCandidate(
-            message.candidate
-          );
         }
       }
 
-      // ------------------------------------------------------------
-      // LISTENER RECEIVES ANSWER / ICE
-      // ------------------------------------------------------------
-
       if (role === "listener") {
-        if (
-          message.type === "sdp-answer" &&
-          message.sdp
-        ) {
-          await handleListenerAnswer(
-            message.sdp
-          );
-
+        if (message.type === "sdp-answer" && message.sdp) {
+          await handleListenerAnswer(message.sdp);
           return;
         }
-
-        if (
-          message.type === "ice-candidate" &&
-          message.candidate
-        ) {
-          await handleListenerIceCandidate(
-            message.candidate
-          );
-
+        if (message.type === "ice-candidate" && message.candidate) {
+          await handleListenerIceCandidate(message.candidate);
           return;
-        }
-
-        // Compatibility with the old message shape.
-        if (
-          message.sdp &&
-          message.sdp.type === "answer"
-        ) {
-          await handleListenerAnswer(
-            message.sdp
-          );
-
-          return;
-        }
-
-        if (
-          message.candidate
-        ) {
-          await handleListenerIceCandidate(
-            message.candidate
-          );
         }
       }
     }
 
-    // ============================================================
-    // MIC WEBRTC HANDLERS
-    // ============================================================
-
-    async function handleMicOffer(
-      offer,
-      senderId
-    ) {
+    async function handleMicOffer(offer, senderId) {
       if (!senderId) {
-        log(
-          "Received an offer but could not identify the listener.",
-          true
-        );
+        log("Received an offer but could not identify the listener.", true);
         return;
       }
 
-      // Only handle offers from the currently selected listener.
       micTargetId = senderId;
-
       closeMicConnection();
+      micTargetId = senderId; // Reassign after close resets it
 
-      // closeMicConnection resets micTargetId, so restore it.
-      micTargetId = senderId;
+      micPC = new RTCPeerConnection(RTC_CONFIGURATION);
 
-      micPC = new RTCPeerConnection(
-        RTC_CONFIGURATION
-      );
-
-      micPC.onicecandidate = (event) => {
+      micPC.onicecandidate = function(event) {
         if (event.candidate) {
-          sendMessage(
-            {
-              type: "ice-candidate",
-              candidate: event.candidate
-            },
-            senderId
-          );
+          sendMessage({
+            type: "ice-candidate",
+            candidate: event.candidate
+          }, senderId);
         }
       };
 
-      micPC.onconnectionstatechange = () => {
-        const state = micPC?.connectionState;
-
+      micPC.onconnectionstatechange = function() {
+        const state = micPC ? micPC.connectionState : null;
         log("Mic WebRTC state: " + state);
 
-        if (state === "connected") {
-          setStatus(
-            micStatus,
-            "Streaming microphone audio to a listener.",
-            "good"
-          );
-        }
-
-        if (state === "failed") {
-          setStatus(
-            micStatus,
-            "WebRTC connection failed.",
-            "error"
-          );
-        }
-
-        if (state === "disconnected") {
-          setStatus(
-            micStatus,
-            "Listener disconnected. Waiting for another listener...",
-            "warn"
-          );
-        }
+        if (state === "connected") setStatus(micStatus, "Streaming microphone audio to a listener.", "good");
+        if (state === "failed") setStatus(micStatus, "WebRTC connection failed.", "error");
+        if (state === "disconnected") setStatus(micStatus, "Listener disconnected. Waiting for another listener...", "warn");
       };
 
-      micPC.oniceconnectionstatechange = () => {
-        log(
-          "Mic ICE state: " +
-          micPC?.iceConnectionState
-        );
-      };
-
-      // Add our microphone track before answering.
       if (localStream) {
-        for (const track of localStream.getAudioTracks()) {
+        localStream.getAudioTracks().forEach(function(track) {
           micPC.addTrack(track, localStream);
-        }
+        });
       }
 
       try {
-        await micPC.setRemoteDescription(
-          new RTCSessionDescription(offer)
-        );
-
-        // ICE candidates may have arrived before the SDP.
+        await micPC.setRemoteDescription(new RTCSessionDescription(offer));
         await flushMicCandidates();
-
         const answer = await micPC.createAnswer();
-
         await micPC.setLocalDescription(answer);
 
-        sendMessage(
-          {
-            type: "sdp-answer",
-            sdp: micPC.localDescription
-          },
-          senderId
-        );
-
+        sendMessage({
+          type: "sdp-answer",
+          sdp: micPC.localDescription
+        }, senderId);
         log("Answer sent to listener.");
 
       } catch (error) {
-        showFatalError(
-          "Could not answer WebRTC offer: " +
-          formatError(error)
-        );
+        showFatalError("Could not answer WebRTC offer: " + formatError(error));
       }
     }
 
-    async function handleMicIceCandidate(
-      candidate
-    ) {
-      if (!micPC) {
+    async function handleMicIceCandidate(candidate) {
+      if (!micPC || !micPC.remoteDescription) {
         micPendingCandidates.push(candidate);
         return;
       }
-
-      // addIceCandidate() requires a remote description.
-      if (!micPC.remoteDescription) {
-        micPendingCandidates.push(candidate);
-        return;
-      }
-
       try {
-        await micPC.addIceCandidate(
-          new RTCIceCandidate(candidate)
-        );
+        await micPC.addIceCandidate(new RTCIceCandidate(candidate));
       } catch (error) {
-        log(
-          "Mic ICE candidate error: " +
-          formatError(error),
-          true
-        );
+        log("Mic ICE candidate error: " + formatError(error), true);
       }
     }
 
     async function flushMicCandidates() {
-      if (!micPC || !micPC.remoteDescription) {
-        return;
-      }
-
-      const candidates =
-        micPendingCandidates.splice(
-          0,
-          micPendingCandidates.length
-        );
-
+      if (!micPC || !micPC.remoteDescription) return;
+      const candidates = micPendingCandidates.splice(0, micPendingCandidates.length);
       for (const candidate of candidates) {
         try {
-          await micPC.addIceCandidate(
-            new RTCIceCandidate(candidate)
-          );
+          await micPC.addIceCandidate(new RTCIceCandidate(candidate));
         } catch (error) {
-          log(
-            "Failed to add queued mic ICE candidate: " +
-            formatError(error),
-            true
-          );
+          log("Failed to add queued mic ICE candidate: " + formatError(error), true);
         }
       }
     }
 
-    // ============================================================
-    // LISTENER WEBRTC HANDLERS
-    // ============================================================
-
-    async function handleListenerAnswer(
-      answer
-    ) {
+    async function handleListenerAnswer(answer) {
       if (!listenerPC) {
-        log(
-          "Received an answer but no listener connection exists.",
-          true
-        );
+        log("Received an answer but no listener connection exists.", true);
         return;
       }
-
       try {
-        await listenerPC.setRemoteDescription(
-          new RTCSessionDescription(answer)
-        );
-
+        await listenerPC.setRemoteDescription(new RTCSessionDescription(answer));
         await flushListenerCandidates();
-
         log("Answer received and remote description set.");
-
       } catch (error) {
-        showFatalError(
-          "Could not set remote answer: " +
-          formatError(error)
-        );
+        showFatalError("Could not set remote answer: " + formatError(error));
       }
     }
 
-    async function handleListenerIceCandidate(
-      candidate
-    ) {
-      if (!listenerPC) {
+    async function handleListenerIceCandidate(candidate) {
+      if (!listenerPC || !listenerPC.remoteDescription) {
         listenerPendingCandidates.push(candidate);
         return;
       }
-
-      // Queue candidates until the answer/remote SDP exists.
-      if (!listenerPC.remoteDescription) {
-        listenerPendingCandidates.push(candidate);
-        return;
-      }
-
       try {
-        await listenerPC.addIceCandidate(
-          new RTCIceCandidate(candidate)
-        );
+        await listenerPC.addIceCandidate(new RTCIceCandidate(candidate));
       } catch (error) {
-        log(
-          "Listener ICE candidate error: " +
-          formatError(error),
-          true
-        );
+        log("Listener ICE candidate error: " + formatError(error), true);
       }
     }
 
     async function flushListenerCandidates() {
-      if (
-        !listenerPC ||
-        !listenerPC.remoteDescription
-      ) {
-        return;
-      }
-
-      const candidates =
-        listenerPendingCandidates.splice(
-          0,
-          listenerPendingCandidates.length
-        );
-
+      if (!listenerPC || !listenerPC.remoteDescription) return;
+      const candidates = listenerPendingCandidates.splice(0, listenerPendingCandidates.length);
       for (const candidate of candidates) {
         try {
-          await listenerPC.addIceCandidate(
-            new RTCIceCandidate(candidate)
-          );
+          await listenerPC.addIceCandidate(new RTCIceCandidate(candidate));
         } catch (error) {
-          log(
-            "Failed to add queued listener ICE candidate: " +
-            formatError(error),
-            true
-          );
+          log("Failed to add queued listener ICE candidate: " + formatError(error), true);
         }
       }
     }
@@ -1233,13 +801,12 @@
     // ============================================================
     // CLEANUP
     // ============================================================
-
-    window.addEventListener("beforeunload", () => {
+    window.addEventListener("beforeunload", function() {
       closeListenerConnection();
       closeMicConnection();
 
       if (localStream) {
-        localStream.getTracks().forEach((track) => {
+        localStream.getTracks().forEach(function(track) {
           track.stop();
         });
       }
@@ -1247,7 +814,7 @@
       if (drone) {
         try {
           drone.close();
-        } catch {}
+        } catch (e) {}
       }
     });
   </script>
