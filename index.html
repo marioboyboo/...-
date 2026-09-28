@@ -18,7 +18,6 @@
       min-height: 100vh;
     }
     
-    /* Fullscreen black screen for Mic mode */
     body.mic-active {
       background-color: #000000;
     }
@@ -77,11 +76,17 @@
     .status-dot.active {
       background-color: #34c759;
     }
+
+    .log {
+      font-size: 0.85rem;
+      color: #8e8e93;
+      margin-top: 15px;
+    }
   </style>
 </head>
 <body>
 
-  <!-- Mode Selection View -->
+  <!-- Mode Selection -->
   <div id="selection-view" class="container">
     <h2>Select Role</h2>
     <p>Choose whether this device acts as an audio source or a receiver.</p>
@@ -95,11 +100,13 @@
   <!-- Listener View -->
   <div id="listener-view" class="container hidden">
     <h2><span id="status-indicator" class="status-dot"></span> Available Mics</h2>
-    <p>Select an active device to play its live audio stream:</p>
+    <p>Select an active device to listen:</p>
     <select id="device-select">
       <option value="">Waiting for devices...</option>
     </select>
-    <audio id="audio-player" autoplay controls style="width: 100%; margin-top: 15px;"></audio>
+    <button id="play-btn" onclick="enableAudio()">Connect &amp; Start Listening</button>
+    <div id="log-status" class="log">Select a device and press Connect</div>
+    <audio id="audio-player" autoplay style="display:none;"></audio>
   </div>
 
   <script>
@@ -109,11 +116,16 @@
     let drone = null;
     let room = null;
     let localStream = null;
-    let peerConnections = {}; // Stores RTCPeerConnection for each peer ID
+    let peerConnections = {}; 
     let role = null;
     
+    // Multiple STUN servers to guarantee connectivity across cellular/different Wi-Fi networks
     const rtcConfig = {
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' }
+      ]
     };
 
     function startMode(selectedRole) {
@@ -138,18 +150,11 @@
 
         room = drone.subscribe(ROOM_NAME);
 
-        room.on('open', error => {
-          if (error) console.error('Room error:', error);
-        });
-
-        // Track active members in the room
         room.on('members', members => {
           updateDeviceList(members);
         });
 
-        room.on('member_join', member => {
-          updateDeviceList();
-        });
+        room.on('member_join', () => updateDeviceList());
 
         room.on('member_leave', member => {
           if (peerConnections[member.id]) {
@@ -159,9 +164,12 @@
           updateDeviceList();
         });
 
-        // Handle WebRTC Signaling messages
         room.on('data', (data, member) => {
+          // Ignore own messages
           if (member.id === drone.clientId) return;
+
+          // Only process messages targeted explicitly to this client
+          if (data.target && data.target !== drone.clientId) return;
 
           if (data.sdp) {
             handleOfferOrAnswer(member.id, data.sdp);
@@ -175,25 +183,24 @@
     // --- MIC MODE ---
     async function initMic() {
       try {
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        localStream = await navigator.mediaDevices.getUserMedia({ 
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false
+          }, 
+          video: false 
+        });
         const deviceName = `Mic ${Math.floor(1000 + Math.random() * 9000)}`;
         initScaledrone({ name: deviceName, type: 'mic' });
       } catch (err) {
-        alert('Microphone access denied or unavailable: ' + err.message);
+        alert('Microphone access denied: ' + err.message);
       }
     }
 
     // --- LISTENER MODE ---
     function initListener() {
       initScaledrone({ name: 'Listener', type: 'listener' });
-      
-      const selectEl = document.getElementById('device-select');
-      selectEl.addEventListener('change', (e) => {
-        const selectedPeerId = e.target.value;
-        if (selectedPeerId) {
-          connectToMic(selectedPeerId);
-        }
-      });
     }
 
     function updateDeviceList(membersList) {
@@ -220,6 +227,23 @@
       document.getElementById('status-indicator').classList.toggle('active', count > 0);
     }
 
+    function enableAudio() {
+      const selectEl = document.getElementById('device-select');
+      const selectedPeerId = selectEl.value;
+
+      if (!selectedPeerId) {
+        alert('Please select a Mic device from the dropdown first.');
+        return;
+      }
+
+      // Resume audio context to bypass browser autoplay restrictions
+      const audioElement = document.getElementById('audio-player');
+      audioElement.play().catch(() => {});
+
+      document.getElementById('log-status').textContent = 'Connecting...';
+      connectToMic(selectedPeerId);
+    }
+
     // --- WEBRTC SIGNALING ---
     function createPeerConnection(targetPeerId) {
       const pc = new RTCPeerConnection(rtcConfig);
@@ -241,9 +265,9 @@
       if (role === 'listener') {
         pc.ontrack = event => {
           const audioElement = document.getElementById('audio-player');
-          if (audioElement.srcObject !== event.streams[0]) {
-            audioElement.srcObject = event.streams[0];
-          }
+          audioElement.srcObject = event.streams[0];
+          audioElement.play();
+          document.getElementById('log-status').textContent = 'Streaming live audio!';
         };
       }
 
@@ -251,7 +275,7 @@
     }
 
     async function connectToMic(peerId) {
-      // Close existing connections to isolate audio from the chosen mic
+      // Close existing connections
       Object.keys(peerConnections).forEach(id => {
         peerConnections[id].close();
         delete peerConnections[id];
