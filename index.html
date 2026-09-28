@@ -3,318 +3,152 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Scaledrone Audio Streamer</title>
-  <script src="https://cdn.scaledrone.com/scaledrone.min.js"></script>
+  <title>PeerJS Audio Streamer</title>
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       background-color: #121212;
       color: #ffffff;
       margin: 0;
-      padding: 0;
       display: flex;
       justify-content: center;
       align-items: center;
       min-height: 100vh;
     }
-    
-    body.mic-active {
-      background-color: #000000;
-    }
-    
+    body.mic-active { background-color: #000000; }
     .container {
       background: #1e1e1e;
       padding: 2rem;
       border-radius: 12px;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
       text-align: center;
       max-width: 400px;
       width: 90%;
     }
-
     button {
       background-color: #007aff;
       color: white;
       border: none;
       padding: 12px 24px;
       font-size: 1rem;
-      font-weight: 600;
       border-radius: 8px;
       cursor: pointer;
       margin: 10px 5px;
-      transition: background-color 0.2s ease;
     }
-
-    button:hover {
-      background-color: #0056b3;
-    }
-
-    select {
-      width: 100%;
+    input {
+      width: 80%;
       padding: 10px;
-      margin: 15px 0;
+      margin: 10px 0;
       border-radius: 6px;
-      background: #2a2a2a;
-      color: #fff;
       border: 1px solid #444;
+      background: #2a2a2a;
+      color: white;
+      text-align: center;
       font-size: 1rem;
     }
-
-    .hidden {
-      display: none !important;
-    }
-
-    .status-dot {
-      display: inline-block;
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      background-color: #ff3b30;
-      margin-right: 8px;
-    }
-
-    .status-dot.active {
-      background-color: #34c759;
-    }
-
-    .log {
-      font-size: 0.85rem;
-      color: #8e8e93;
-      margin-top: 15px;
+    .hidden { display: none !important; }
+    .code-display {
+      font-size: 1.8rem;
+      font-weight: bold;
+      color: #34c759;
+      letter-spacing: 2px;
+      margin: 15px 0;
     }
   </style>
 </head>
 <body>
 
-  <!-- Mode Selection -->
   <div id="selection-view" class="container">
     <h2>Select Role</h2>
-    <p>Choose whether this device acts as an audio source or a receiver.</p>
-    <button onclick="startMode('mic')">Mic (Transmitter)</button>
-    <button onclick="startMode('listener')">Listener (Receiver)</button>
+    <button onclick="startMic()">Mic (Transmitter)</button>
+    <button onclick="startListener()">Listener (Receiver)</button>
   </div>
 
-  <!-- Mic Active View -->
-  <div id="mic-view" class="hidden"></div>
+  <div id="mic-view" class="container hidden">
+    <h3>Microphone Active</h3>
+    <p>Your unique Mic Code is:</p>
+    <div id="mic-id-display" class="code-display">Generating...</div>
+    <p style="font-size: 0.8rem; color: #8e8e93;">Screen will go black shortly...</p>
+  </div>
 
-  <!-- Listener View -->
   <div id="listener-view" class="container hidden">
-    <h2><span id="status-indicator" class="status-dot"></span> Available Mics</h2>
-    <p>Select an active device to listen:</p>
-    <select id="device-select">
-      <option value="">Waiting for devices...</option>
-    </select>
-    <button id="play-btn" onclick="enableAudio()">Connect &amp; Start Listening</button>
-    <div id="log-status" class="log">Select a device and press Connect</div>
-    <audio id="audio-player" autoplay style="display:none;"></audio>
+    <h2>Listener Mode</h2>
+    <p>Enter the 4-digit code shown on the Mic device:</p>
+    <input type="text" id="target-id" placeholder="e.g. 4821" maxlength="4">
+    <br>
+    <button onclick="connectToMic()">Connect & Listen</button>
+    <div id="status" style="margin-top: 15px; color: #8e8e93;">Not connected</div>
+    <audio id="audio-player" autoplay controls style="width: 100%; margin-top: 15px;"></audio>
   </div>
 
   <script>
-    const CHANNEL_ID = 'Sw5scfH0QXEhMUkf';
-    const ROOM_NAME = 'observable-room';
-    
-    let drone = null;
-    let room = null;
+    let peer = null;
     let localStream = null;
-    let peerConnections = {}; 
-    let role = null;
-    
-    // Multiple STUN servers to guarantee connectivity across cellular/different Wi-Fi networks
-    const rtcConfig = {
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' }
-      ]
-    };
 
-    function startMode(selectedRole) {
-      role = selectedRole;
+    function startMic() {
       document.getElementById('selection-view').classList.add('hidden');
+      document.getElementById('mic-view').classList.remove('hidden');
 
-      if (role === 'mic') {
-        document.body.classList.add('mic-active');
-        document.getElementById('mic-view').classList.remove('hidden');
-        initMic();
-      } else {
-        document.getElementById('listener-view').classList.remove('hidden');
-        initListener();
-      }
-    }
+      // Random 4-digit ID prefix for easy typing
+      const customId = 'mic-' + Math.floor(1000 + Math.random() * 9000);
+      
+      // Initialize PeerJS
+      peer = new Peer(customId);
 
-    function initScaledrone(memberData) {
-      drone = new Scaledrone(CHANNEL_ID, { data: memberData });
+      peer.on('open', (id) => {
+        document.getElementById('mic-id-display').textContent = id.replace('mic-', '');
+        
+        // Darken screen after 3 seconds
+        setTimeout(() => {
+          document.body.classList.add('mic-active');
+          document.getElementById('mic-view').classList.add('hidden');
+        }, 3000);
+      });
 
-      drone.on('open', error => {
-        if (error) return console.error('Scaledrone error:', error);
+      // Capture Microphone Audio
+      navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+        .then(stream => {
+          localStream = stream;
+        })
+        .catch(err => alert('Microphone Error: ' + err.message));
 
-        room = drone.subscribe(ROOM_NAME);
-
-        room.on('members', members => {
-          updateDeviceList(members);
-        });
-
-        room.on('member_join', () => updateDeviceList());
-
-        room.on('member_leave', member => {
-          if (peerConnections[member.id]) {
-            peerConnections[member.id].close();
-            delete peerConnections[member.id];
-          }
-          updateDeviceList();
-        });
-
-        room.on('data', (data, member) => {
-          // Ignore own messages
-          if (member.id === drone.clientId) return;
-
-          // Only process messages targeted explicitly to this client
-          if (data.target && data.target !== drone.clientId) return;
-
-          if (data.sdp) {
-            handleOfferOrAnswer(member.id, data.sdp);
-          } else if (data.candidate) {
-            handleIceCandidate(member.id, data.candidate);
-          }
-        });
+      // Answer incoming calls automatically
+      peer.on('call', (call) => {
+        call.answer(localStream);
       });
     }
 
-    // --- MIC MODE ---
-    async function initMic() {
-      try {
-        localStream = await navigator.mediaDevices.getUserMedia({ 
-          audio: {
-            echoCancellation: false,
-            noiseSuppression: false,
-            autoGainControl: false
-          }, 
-          video: false 
-        });
-        const deviceName = `Mic ${Math.floor(1000 + Math.random() * 9000)}`;
-        initScaledrone({ name: deviceName, type: 'mic' });
-      } catch (err) {
-        alert('Microphone access denied: ' + err.message);
-      }
+    function startListener() {
+      document.getElementById('selection-view').classList.add('hidden');
+      document.getElementById('listener-view').classList.remove('hidden');
+      
+      // Initialize Listener with a random peer ID
+      peer = new Peer();
     }
 
-    // --- LISTENER MODE ---
-    function initListener() {
-      initScaledrone({ name: 'Listener', type: 'listener' });
-    }
+    function connectToMic() {
+      const code = document.getElementById('target-id').value.trim();
+      if (!code) return alert('Please enter a Mic Code');
 
-    function updateDeviceList(membersList) {
-      if (role !== 'listener') return;
+      const fullTargetId = 'mic-' + code;
+      document.getElementById('status').textContent = 'Connecting...';
 
-      const selectEl = document.getElementById('device-select');
-      const currentSelected = selectEl.value;
-      selectEl.innerHTML = '<option value="">-- Select a Mic Device --</option>';
+      // Unmute/enable web audio engine
+      const audio = document.getElementById('audio-player');
+      audio.play().catch(() => {});
 
-      const members = membersList || room.members;
-      let count = 0;
+      // Call the mic (Listener sends an empty media stream offer to request receiver audio)
+      const call = peer.call(fullTargetId, new MediaStream());
 
-      members.forEach(member => {
-        if (member.clientData && member.clientData.type === 'mic') {
-          count++;
-          const option = document.createElement('option');
-          option.value = member.id;
-          option.textContent = `${member.clientData.name} (${member.id})`;
-          if (member.id === currentSelected) option.selected = true;
-          selectEl.appendChild(option);
-        }
+      call.on('stream', (remoteStream) => {
+        document.getElementById('status').textContent = 'Live Audio Connected!';
+        audio.srcObject = remoteStream;
+        audio.play();
       });
 
-      document.getElementById('status-indicator').classList.toggle('active', count > 0);
-    }
-
-    function enableAudio() {
-      const selectEl = document.getElementById('device-select');
-      const selectedPeerId = selectEl.value;
-
-      if (!selectedPeerId) {
-        alert('Please select a Mic device from the dropdown first.');
-        return;
-      }
-
-      // Resume audio context to bypass browser autoplay restrictions
-      const audioElement = document.getElementById('audio-player');
-      audioElement.play().catch(() => {});
-
-      document.getElementById('log-status').textContent = 'Connecting...';
-      connectToMic(selectedPeerId);
-    }
-
-    // --- WEBRTC SIGNALING ---
-    function createPeerConnection(targetPeerId) {
-      const pc = new RTCPeerConnection(rtcConfig);
-      peerConnections[targetPeerId] = pc;
-
-      pc.onicecandidate = event => {
-        if (event.candidate) {
-          drone.publish({
-            room: ROOM_NAME,
-            message: { candidate: event.candidate, target: targetPeerId }
-          });
-        }
-      };
-
-      if (role === 'mic' && localStream) {
-        localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-      }
-
-      if (role === 'listener') {
-        pc.ontrack = event => {
-          const audioElement = document.getElementById('audio-player');
-          audioElement.srcObject = event.streams[0];
-          audioElement.play();
-          document.getElementById('log-status').textContent = 'Streaming live audio!';
-        };
-      }
-
-      return pc;
-    }
-
-    async function connectToMic(peerId) {
-      // Close existing connections
-      Object.keys(peerConnections).forEach(id => {
-        peerConnections[id].close();
-        delete peerConnections[id];
+      call.on('error', (err) => {
+        document.getElementById('status').textContent = 'Connection failed: ' + err.message;
       });
-
-      const pc = createPeerConnection(peerId);
-      const offer = await pc.createOffer({ offerToReceiveAudio: true });
-      await pc.setLocalDescription(offer);
-
-      drone.publish({
-        room: ROOM_NAME,
-        message: { sdp: pc.localDescription, target: peerId }
-      });
-    }
-
-    async function handleOfferOrAnswer(senderId, sdp) {
-      let pc = peerConnections[senderId];
-
-      if (sdp.type === 'offer' && role === 'mic') {
-        if (pc) pc.close();
-        pc = createPeerConnection(senderId);
-        await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-
-        drone.publish({
-          room: ROOM_NAME,
-          message: { sdp: pc.localDescription, target: senderId }
-        });
-      } else if (sdp.type === 'answer' && role === 'listener' && pc) {
-        await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-      }
-    }
-
-    async function handleIceCandidate(senderId, candidate) {
-      const pc = peerConnections[senderId];
-      if (pc) {
-        await pc.addIceCandidate(new RTCIceCandidate(candidate));
-      }
     }
   </script>
 </body>
