@@ -18,7 +18,6 @@
       min-height: 100vh;
     }
 
-    /* Black out screen completely in Mic mode */
     body.mic-active {
       background-color: #000000;
     }
@@ -101,15 +100,21 @@
       <div class="status">Connecting to Scaledrone signaling...</div>
     </div>
     <div id="connection-status" class="status">Not connected</div>
-    <audio id="remoteAudio" autoplay controls style="width: 100%; margin-top: 15px;"></audio>
+    <audio id="remoteAudio" autoplay playsinline controls style="width: 100%; margin-top: 15px;"></audio>
   </div>
 
   <script>
     const CHANNEL_ID = 'Sw5scfH0QXEhMUkf';
     const ROOM_NAME = 'observable-audio-room';
 
+    // Multiple STUN servers ensure NAT/Firewall traversal across different networks
     const configuration = {
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun.cloudflare.com:3478' }
+      ]
     };
 
     let drone;
@@ -120,7 +125,7 @@
     let selectedMicTargetId = null;
 
     function onError(error) {
-      console.error('Error:', error);
+      console.error('WebRTC/Scaledrone Error:', error);
     }
 
     function sendMessage(message, targetId) {
@@ -144,7 +149,6 @@
       }
     }
 
-    // --- INITIALIZE SCALEDRONE SIGNALING SERVER ---
     function initDrone(userData) {
       drone = new ScaleDrone(CHANNEL_ID, { data: userData });
 
@@ -157,14 +161,13 @@
           if (error) onError(error);
         });
 
-        // Track room members (for dynamic mic device listing)
         room.on('members', members => {
           if (role === 'listener') renderDeviceList(members);
         });
 
         room.on('member_join', () => {
-          if (role === 'listener') {
-            room.on('members', members => renderDeviceList(members));
+          if (role === 'listener' && room) {
+            renderDeviceList(room.members);
           }
         });
 
@@ -174,7 +177,7 @@
               pc.close();
               document.getElementById('connection-status').textContent = 'Selected Mic disconnected.';
             }
-            room.on('members', members => renderDeviceList(members));
+            if (room) renderDeviceList(room.members);
           }
         });
 
@@ -184,7 +187,15 @@
 
     // --- MIC MODE ---
     function initMic() {
-      navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(stream => {
+      // Constraints tuned specifically for clean live audio transfer
+      navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: false,
+          autoGainControl: true
+        }, 
+        video: false 
+      }).then(stream => {
         localStream = stream;
         const micName = `Mic ${Math.floor(1000 + Math.random() * 9000)}`;
         initDrone({ name: micName, type: 'mic' });
@@ -202,7 +213,7 @@
       const listContainer = document.getElementById('device-list');
       listContainer.innerHTML = '';
 
-      const mics = members.filter(m => m.clientData && m.clientData.type === 'mic');
+      const mics = (members || []).filter(m => m.clientData && m.clientData.type === 'mic');
 
       if (mics.length === 0) {
         listContainer.innerHTML = '<div class="status">No active microphones found.</div>';
@@ -221,16 +232,18 @@
 
     // --- WEBRTC CONNECTION SETUP ---
     function connectToMic(targetId, name) {
-      if (pc) pc.close(); // Close existing WebRTC connection before switching
+      if (pc) {
+        pc.close();
+      }
 
       selectedMicTargetId = targetId;
       document.getElementById('connection-status').textContent = `Connecting to ${name}...`;
 
-      // Unmute browser HTML5 audio element
       const remoteAudio = document.getElementById('remoteAudio');
+
+      // Force-play audio element to bypass browser autoplay blocks
       remoteAudio.play().catch(() => {});
 
-      // Create WebRTC Peer Connection
       pc = new RTCPeerConnection(configuration);
 
       pc.onicecandidate = event => {
@@ -239,13 +252,25 @@
         }
       };
 
+      // Set stream directly when audio track arrives
       pc.ontrack = event => {
-        remoteAudio.srcObject = event.streams[0];
-        document.getElementById('connection-status').textContent = `Streaming live from ${name}`;
+        if (event.streams && event.streams[0]) {
+          remoteAudio.srcObject = event.streams[0];
+        } else {
+          remoteAudio.srcObject = new MediaStream([event.track]);
+        }
+
+        remoteAudio.play().then(() => {
+          document.getElementById('connection-status').textContent = `Streaming live from ${name}`;
+        }).catch(() => {
+          document.getElementById('connection-status').textContent = `Connected! Tap play on the audio player below.`;
+        });
       };
 
-      // Create SDP Offer
-      pc.createOffer({ offerToReceiveAudio: true }).then(offer => {
+      // Request audio-only reception
+      pc.addTransceiver('audio', { direction: 'recvonly' });
+
+      pc.createOffer().then(offer => {
         return pc.setLocalDescription(offer);
       }).then(() => {
         sendMessage({ sdp: pc.localDescription }, targetId);
@@ -255,12 +280,10 @@
     // --- SIGNALING LISTENER ---
     function startListeningToSignals() {
       room.on('data', (message, client) => {
-        // Ignore own messages or messages meant for other peers
         if (!client || client.id === drone.clientId) return;
         if (message.target && message.target !== drone.clientId) return;
 
         if (role === 'mic') {
-          // Mic receives SDP Offer from Listener
           if (message.sdp && message.sdp.type === 'offer') {
             if (pc) pc.close();
 
@@ -272,8 +295,12 @@
               }
             };
 
-            // Add local audio tracks to send to Listener
-            localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+            // Attach mic track to stream
+            if (localStream) {
+              localStream.getAudioTracks().forEach(track => {
+                pc.addTrack(track, localStream);
+              });
+            }
 
             pc.setRemoteDescription(new RTCSessionDescription(message.sdp))
               .then(() => pc.createAnswer())
@@ -283,16 +310,15 @@
               })
               .catch(onError);
 
-          } else if (message.candidate) {
-            pc.addIceCandidate(new RTCIceCandidate(message.candidate), () => {}, onError);
+          } else if (message.candidate && pc) {
+            pc.addIceCandidate(new RTCIceCandidate(message.candidate)).catch(onError);
           }
 
         } else if (role === 'listener') {
-          // Listener receives SDP Answer back from Mic
           if (message.sdp && message.sdp.type === 'answer') {
-            pc.setRemoteDescription(new RTCSessionDescription(message.sdp), () => {}, onError);
+            pc.setRemoteDescription(new RTCSessionDescription(message.sdp)).catch(onError);
           } else if (message.candidate && pc) {
-            pc.addIceCandidate(new RTCIceCandidate(message.candidate), () => {}, onError);
+            pc.addIceCandidate(new RTCIceCandidate(message.candidate)).catch(onError);
           }
         }
       });
