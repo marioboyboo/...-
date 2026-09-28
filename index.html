@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PeerJS Audio Streamer</title>
+  <title>Multi-Mic Audio Streamer</title>
   <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
   <style>
     body {
@@ -16,138 +16,210 @@
       align-items: center;
       min-height: 100vh;
     }
-    body.mic-active { background-color: #000000; }
+    
+    body.mic-active {
+      background-color: #000000;
+    }
+
     .container {
       background: #1e1e1e;
       padding: 2rem;
       border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
       text-align: center;
       max-width: 400px;
       width: 90%;
     }
+
     button {
       background-color: #007aff;
       color: white;
       border: none;
       padding: 12px 24px;
       font-size: 1rem;
+      font-weight: 600;
       border-radius: 8px;
       cursor: pointer;
       margin: 10px 5px;
+      transition: background-color 0.2s ease;
     }
-    input {
-      width: 80%;
-      padding: 10px;
-      margin: 10px 0;
-      border-radius: 6px;
+
+    button:hover {
+      background-color: #0056b3;
+    }
+
+    .device-btn {
+      display: block;
+      width: 100%;
+      background-color: #2a2a2a;
       border: 1px solid #444;
-      background: #2a2a2a;
-      color: white;
-      text-align: center;
-      font-size: 1rem;
+      margin: 8px 0;
+      padding: 14px;
+      text-align: left;
     }
-    .hidden { display: none !important; }
-    .code-display {
-      font-size: 1.8rem;
+
+    .device-btn.active {
+      background-color: #34c759;
+      color: #000;
       font-weight: bold;
-      color: #34c759;
-      letter-spacing: 2px;
-      margin: 15px 0;
+      border-color: #34c759;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .status {
+      font-size: 0.85rem;
+      color: #8e8e93;
+      margin-top: 15px;
     }
   </style>
 </head>
 <body>
 
+  <!-- Mode Selection -->
   <div id="selection-view" class="container">
     <h2>Select Role</h2>
+    <p>Choose whether this device acts as an audio source or a receiver.</p>
     <button onclick="startMic()">Mic (Transmitter)</button>
     <button onclick="startListener()">Listener (Receiver)</button>
   </div>
 
-  <div id="mic-view" class="container hidden">
-    <h3>Microphone Active</h3>
-    <p>Your unique Mic Code is:</p>
-    <div id="mic-id-display" class="code-display">Generating...</div>
-    <p style="font-size: 0.8rem; color: #8e8e93;">Screen will go black shortly...</p>
-  </div>
+  <!-- Mic Active View (Goes completely black) -->
+  <div id="mic-view" class="hidden"></div>
 
+  <!-- Listener View -->
   <div id="listener-view" class="container hidden">
-    <h2>Listener Mode</h2>
-    <p>Enter the 4-digit code shown on the Mic device:</p>
-    <input type="text" id="target-id" placeholder="e.g. 4821" maxlength="4">
-    <br>
-    <button onclick="connectToMic()">Connect & Listen</button>
-    <div id="status" style="margin-top: 15px; color: #8e8e93;">Not connected</div>
+    <h2>Active Microphones</h2>
+    <p>Tap any device to switch streams:</p>
+    <div id="device-list">
+      <div class="status">Scanning for online mics...</div>
+    </div>
+    <div id="connection-status" class="status">Not connected</div>
     <audio id="audio-player" autoplay controls style="width: 100%; margin-top: 15px;"></audio>
   </div>
 
   <script>
+    const HUB_ID = 'audio-hub-registry-room-scaledrone-alt';
     let peer = null;
     let localStream = null;
+    let currentCall = null;
+    let registeredMics = {};
 
-    function startMic() {
+    // --- MIC MODE ---
+    async function startMic() {
       document.getElementById('selection-view').classList.add('hidden');
+      document.body.classList.add('mic-active');
       document.getElementById('mic-view').classList.remove('hidden');
 
-      // Random 4-digit ID prefix for easy typing
-      const customId = 'mic-' + Math.floor(1000 + Math.random() * 9000);
-      
-      // Initialize PeerJS
-      peer = new Peer(customId);
+      try {
+        // Capture high-quality mic input
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
 
-      peer.on('open', (id) => {
-        document.getElementById('mic-id-display').textContent = id.replace('mic-', '');
-        
-        // Darken screen after 3 seconds
-        setTimeout(() => {
-          document.body.classList.add('mic-active');
-          document.getElementById('mic-view').classList.add('hidden');
-        }, 3000);
-      });
+        const micId = 'mic-' + Math.floor(1000 + Math.random() * 9000);
+        const deviceName = `Microphone ${micId.replace('mic-', '')}`;
+        peer = new Peer(micId);
 
-      // Capture Microphone Audio
-      navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-        .then(stream => {
-          localStream = stream;
-        })
-        .catch(err => alert('Microphone Error: ' + err.message));
+        // Announce presence to the Hub/Listener network when connected
+        peer.on('open', () => {
+          const hubConn = peer.connect(HUB_ID);
+          hubConn.on('open', () => {
+            hubConn.send({ type: 'register', id: micId, name: deviceName });
+          });
+        });
 
-      // Answer incoming calls automatically
-      peer.on('call', (call) => {
-        call.answer(localStream);
-      });
+        // Answer incoming calls automatically from any switching listener
+        peer.on('call', (call) => {
+          call.answer(localStream);
+        });
+
+      } catch (err) {
+        alert('Microphone access denied or unassigned: ' + err.message);
+      }
     }
 
+    // --- LISTENER MODE ---
     function startListener() {
       document.getElementById('selection-view').classList.add('hidden');
       document.getElementById('listener-view').classList.remove('hidden');
-      
-      // Initialize Listener with a random peer ID
-      peer = new Peer();
-    }
 
-    function connectToMic() {
-      const code = document.getElementById('target-id').value.trim();
-      if (!code) return alert('Please enter a Mic Code');
+      // The listener registers as the "Hub" to collect active mic IDs
+      peer = new Peer(HUB_ID);
 
-      const fullTargetId = 'mic-' + code;
-      document.getElementById('status').textContent = 'Connecting...';
-
-      // Unmute/enable web audio engine
-      const audio = document.getElementById('audio-player');
-      audio.play().catch(() => {});
-
-      // Call the mic (Listener sends an empty media stream offer to request receiver audio)
-      const call = peer.call(fullTargetId, new MediaStream());
-
-      call.on('stream', (remoteStream) => {
-        document.getElementById('status').textContent = 'Live Audio Connected!';
-        audio.srcObject = remoteStream;
-        audio.play();
+      peer.on('open', () => {
+        document.getElementById('connection-status').textContent = 'Listening for live mics...';
       });
 
-      call.on('error', (err) => {
-        document.getElementById('status').textContent = 'Connection failed: ' + err.message;
+      // Handle cases where the Hub ID is already occupied by another listener instance
+      peer.on('error', (err) => {
+        if (err.type === 'unavailable-id') {
+          peer = new Peer(); // Fallback to random ID
+        }
+      });
+
+      // Listen for incoming registrations from Mics
+      peer.on('connection', (conn) => {
+        conn.on('data', (data) => {
+          if (data.type === 'register') {
+            registeredMics[data.id] = data.name;
+            renderDeviceList();
+          }
+        });
+      });
+    }
+
+    // Dynamic UI builder for switching mics
+    function renderDeviceList() {
+      const listContainer = document.getElementById('device-list');
+      listContainer.innerHTML = '';
+
+      const micIds = Object.keys(registeredMics);
+
+      if (micIds.length === 0) {
+        listContainer.innerHTML = '<div class="status">No active microphones found.</div>';
+        return;
+      }
+
+      micIds.forEach(id => {
+        const btn = document.createElement('button');
+        btn.className = 'device-btn';
+        btn.id = `btn-${id}`;
+        btn.textContent = `🎤 ${registeredMics[id]}`;
+        btn.onclick = () => switchStreamTo(id);
+        listContainer.appendChild(btn);
+      });
+    }
+
+    // --- STREAM SWITCHING ENGINE ---
+    function switchStreamTo(targetMicId) {
+      // 1. Close current audio connection if one exists
+      if (currentCall) {
+        currentCall.close();
+      }
+
+      // Highlight active button in UI
+      document.querySelectorAll('.device-btn').forEach(btn => btn.classList.remove('active'));
+      const activeBtn = document.getElementById(`btn-${targetMicId}`);
+      if (activeBtn) activeBtn.classList.add('active');
+
+      document.getElementById('connection-status').textContent = `Connecting to ${registeredMics[targetMicId]}...`;
+
+      // 2. Unlock HTML5 web audio context
+      const audioElement = document.getElementById('audio-player');
+      audioElement.play().catch(() => {});
+
+      // 3. Initiate new audio stream call to selected mic
+      currentCall = peer.call(targetMicId, new MediaStream());
+
+      currentCall.on('stream', (remoteStream) => {
+        document.getElementById('connection-status').textContent = `Now playing: ${registeredMics[targetMicId]}`;
+        audioElement.srcObject = remoteStream;
+        audioElement.play();
+      });
+
+      currentCall.on('error', (err) => {
+        document.getElementById('connection-status').textContent = `Failed to connect: ${err.message}`;
       });
     }
   </script>
