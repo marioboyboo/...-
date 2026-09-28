@@ -66,7 +66,6 @@
 
 <body>
 
-  <!-- Role selection -->
   <div id="selection-view" class="container">
     <h2>Audio Streamer</h2>
     <p>Choose whether this device sends microphone audio or listens to a microphone.</p>
@@ -75,7 +74,6 @@
     <div id="startup-status" class="status">Ready.</div>
   </div>
 
-  <!-- Mic view -->
   <div id="mic-view" class="mic-screen hidden">
     <div class="mic-dot"></div>
     <h2>Microphone Active</h2>
@@ -84,13 +82,11 @@
     <div id="mic-log" class="log hidden"></div>
   </div>
 
-  <!-- Listener view -->
   <div id="listener-view" class="container hidden">
     <h2>Available Microphones</h2>
     <p>Select a microphone to listen live.</p>
     <div id="device-list"><div class="status">Connecting...</div></div>
     <div id="connection-status" class="status">Not connected</div>
-    <!-- Added 'controls' so users can manually click play if browser auto-play gets blocked -->
     <audio id="remoteAudio" autoplay playsinline controls></audio>
     <div id="listener-log" class="log hidden"></div>
   </div>
@@ -98,27 +94,22 @@
   <script>
     "use strict";
 
-    // 1. FILE PROTOCOL CHECK (Crucial for WebRTC)
     if (window.location.protocol === "file:") {
-      alert("WARNING: WebRTC Microphone access will fail on a file:// URL. You must run this file on a local web server (like VS Code Live Server) or upload it to a secure HTTPS host.");
+      alert("WARNING: WebRTC Microphone access will fail on a file:// URL. Run this on a local web server or HTTPS host.");
     }
 
-    // ============================================================
-    // SCALEDRONE & WEBRTC SETTINGS
-    // ============================================================
+    // Expanded STUN servers to increase success rate on strict networks
     const CHANNEL_ID = "Sw5scfH0QXEhMUkf"; 
     const ROOM_NAME = "observable-audio-room";
-
     const RTC_CONFIGURATION = {
       iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" }
+        { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun2.l.google.com:19302" },
+        { urls: "stun:stun3.l.google.com:19302" }
       ]
     };
 
-    // ============================================================
-    // APP STATE
-    // ============================================================
     let role = null;
     let drone = null;
     let room = null;
@@ -131,7 +122,6 @@
     let micPendingCandidates = [];
     let roomMembers = [];
 
-    // Elements
     const selectionView = document.getElementById("selection-view");
     const micView = document.getElementById("mic-view");
     const listenerView = document.getElementById("listener-view");
@@ -155,9 +145,6 @@
       if (type) el.classList.add(type);
     }
 
-    // ============================================================
-    // INITIALIZATION
-    // ============================================================
     document.getElementById("mic-mode-btn").addEventListener("click", function() {
       if (role) return;
       role = "mic";
@@ -175,27 +162,19 @@
       initDrone({ name: "Listener", type: "listener" });
     });
 
-    // ============================================================
-    // SCALEDRONE CONNECTION
-    // ============================================================
     function initDrone(userData) {
-      if (typeof ScaleDrone === 'undefined') {
-        return log("Scaledrone SDK failed to load. Check adblockers.", true);
-      }
+      if (typeof ScaleDrone === 'undefined') return log("SDK failed to load.", true);
 
       drone = new ScaleDrone(CHANNEL_ID, { data: userData });
       drone.on("open", function(error) {
-        if (error) return log("Scaledrone connection failed: " + error.message, true);
-        log("Scaledrone connected. Joining room...");
-
+        if (error) return log("Connection failed: " + error.message, true);
+        
         room = drone.subscribe(ROOM_NAME);
         room.on("open", function(roomError) {
           if (roomError) return log("Room join failed: " + roomError.message, true);
-          log("Joined " + ROOM_NAME);
           if (role === "mic") setStatus("mic-status", "Waiting for a listener...", "good");
         });
 
-        // Handle signaling messages
         room.on("message", handleSignalingMessage);
 
         room.on("members", function(members) {
@@ -217,7 +196,6 @@
       });
     }
 
-    // Explicitly add our own senderId to prevent signaling collisions
     function sendMessage(message, targetId) {
       if (!drone || !room) return;
       drone.publish({
@@ -226,20 +204,15 @@
       });
     }
 
-    // ============================================================
-    // MICROPHONE MODE (TRANSMITTER)
-    // ============================================================
     async function initMic() {
       try {
         localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
         const micName = "Mic " + Math.floor(1000 + Math.random() * 9000);
         document.getElementById("mic-name").textContent = micName;
         setStatus("mic-status", "Microphone working. Connecting...", "good");
-        
         initDrone({ name: micName, type: "mic" });
       } catch (error) {
-        log("Microphone access failed: " + error.message, true);
-        setStatus("mic-status", "Microphone permission denied. Use HTTPS.", "error");
+        setStatus("mic-status", "Microphone permission denied.", "error");
       }
     }
 
@@ -247,12 +220,9 @@
       micTargetId = null;
       micPendingCandidates = [];
       if (micPC) { micPC.close(); micPC = null; }
-      setStatus("mic-status", "Waiting for another listener...", "good");
+      setStatus("mic-status", "Waiting for a listener...", "good");
     }
 
-    // ============================================================
-    // LISTENER MODE (RECEIVER)
-    // ============================================================
     function renderDeviceList() {
       const listContainer = document.getElementById("device-list");
       listContainer.innerHTML = "";
@@ -270,11 +240,9 @@
         btn.textContent = "🎤 " + micName;
 
         btn.addEventListener("click", function() {
-          // 2. IOS AUTOPLAY FIX: Force media unlock strictly inside the click event
           try { remoteAudio.play().catch(function(){}); } catch(e) {}
           connectToMic(mic.id, micName);
         });
-
         listContainer.appendChild(btn);
       });
     }
@@ -282,34 +250,51 @@
     async function connectToMic(targetId, name) {
       closeListenerConnection();
       listenerTargetId = targetId;
-      setStatus("connection-status", "Connecting to " + name + "...", "warn");
+      setStatus("connection-status", "Connecting network to " + name + "...", "warn");
       
       listenerPC = new RTCPeerConnection(RTC_CONFIGURATION);
-      listenerPC.addTransceiver("audio", { direction: "recvonly" });
+      
+      // Fallback for older Safari/iOS
+      if (listenerPC.addTransceiver) {
+        listenerPC.addTransceiver("audio", { direction: "recvonly" });
+      }
 
       listenerPC.onicecandidate = function(event) {
         if (event.candidate) {
-          sendMessage({ type: "ice-candidate", candidate: event.candidate }, targetId);
+          // Explicit mapping to prevent data stripping
+          const candidateData = {
+            candidate: event.candidate.candidate,
+            sdpMid: event.candidate.sdpMid,
+            sdpMLineIndex: event.candidate.sdpMLineIndex
+          };
+          sendMessage({ type: "ice-candidate", candidate: candidateData }, targetId);
+        }
+      };
+
+      // TRUE NETWORK STATUS TRACKER
+      listenerPC.oniceconnectionstatechange = function() {
+        const state = listenerPC.iceConnectionState;
+        log("Listener Network State: " + state);
+        if (state === "connected" || state === "completed") {
+          setStatus("connection-status", "Streaming live from " + name, "good");
+        } else if (state === "failed") {
+          setStatus("connection-status", "Network blocked by strict router/firewall.", "error");
+        } else if (state === "disconnected") {
+          setStatus("connection-status", "Microphone disconnected.", "warn");
         }
       };
 
       listenerPC.ontrack = function(event) {
-        log("Remote audio track received!");
+        log("Media track registered. Waiting for network pipeline...");
         remoteAudio.srcObject = (event.streams && event.streams[0]) ? event.streams[0] : new MediaStream([event.track]);
-        remoteAudio.play().then(() => {
-          setStatus("connection-status", "Streaming live from " + name, "good");
-        }).catch(() => {
-          setStatus("connection-status", "Stream ready. Tap the audio player below to listen.", "warn");
-        });
+        remoteAudio.play().catch(() => {});
       };
 
       try {
-        const offer = await listenerPC.createOffer();
+        const offer = await listenerPC.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: false });
         await listenerPC.setLocalDescription(offer);
         sendMessage({ type: "sdp-offer", sdp: listenerPC.localDescription }, targetId);
-      } catch (error) {
-        log("Failed to create offer: " + error.message, true);
-      }
+      } catch (error) { log("Failed to create offer.", true); }
     }
 
     function closeListenerConnection() {
@@ -319,14 +304,9 @@
       remoteAudio.srcObject = null;
     }
 
-    // ============================================================
-    // SIGNALING / NEGOTIATION
-    // ============================================================
     async function handleSignalingMessage(envelope) {
       const message = envelope.data;
       if (!message || typeof message !== "object") return;
-      
-      // 3. STRICT TARGET VALIDATION: Ignore messages not explicitly addressed to us
       if (!message.target || message.target !== drone.clientId) return;
 
       const senderId = message.senderId;
@@ -347,18 +327,32 @@
       micPC = new RTCPeerConnection(RTC_CONFIGURATION);
       
       micPC.onicecandidate = function(event) {
-        if (event.candidate) sendMessage({ type: "ice-candidate", candidate: event.candidate }, senderId);
+        if (event.candidate) {
+          const candidateData = {
+            candidate: event.candidate.candidate,
+            sdpMid: event.candidate.sdpMid,
+            sdpMLineIndex: event.candidate.sdpMLineIndex
+          };
+          sendMessage({ type: "ice-candidate", candidate: candidateData }, senderId);
+        }
       };
 
-      micPC.onconnectionstatechange = function() {
-        if (micPC.connectionState === "connected") setStatus("mic-status", "Streaming audio live.", "good");
-        if (micPC.connectionState === "disconnected") closeMicConnection();
+      // TRUE NETWORK STATUS TRACKER FOR MIC
+      micPC.oniceconnectionstatechange = function() {
+        const state = micPC.iceConnectionState;
+        log("Mic Network State: " + state);
+        if (state === "connected" || state === "completed") {
+          setStatus("mic-status", "Streaming audio live.", "good");
+        } else if (state === "failed") {
+          setStatus("mic-status", "Network blocked by strict router.", "error");
+        } else if (state === "disconnected") {
+          closeMicConnection();
+        }
       };
 
-      // 4. SAFE TRACK ADDITION
       if (localStream) {
         localStream.getAudioTracks().forEach(function(track) {
-          try { micPC.addTrack(track, localStream); } catch(e) { log("Track error: " + e.message, true); }
+          try { micPC.addTrack(track, localStream); } catch(e) {}
         });
       }
 
@@ -372,9 +366,7 @@
         const answer = await micPC.createAnswer();
         await micPC.setLocalDescription(answer);
         sendMessage({ type: "sdp-answer", sdp: micPC.localDescription }, senderId);
-      } catch (error) {
-        log("Negotiation failed: " + error.message, true);
-      }
+      } catch (error) { log("Negotiation failed.", true); }
     }
 
     async function handleListenerAnswer(answer) {
@@ -384,7 +376,7 @@
           await listenerPC.addIceCandidate(new RTCIceCandidate(candidate));
         }
         listenerPendingCandidates = [];
-      } catch (error) { log("Answer failed: " + error.message, true); }
+      } catch (error) {}
     }
 
     async function handleMicIceCandidate(candidate) {
