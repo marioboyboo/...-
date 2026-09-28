@@ -3,20 +3,22 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Multi-Mic Audio Streamer</title>
-  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <title>Scaledrone WebRTC Audio Streamer</title>
+  <script type="text/javascript" src="https://cdn.scaledrone.com/scaledrone.min.js"></script>
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       background-color: #121212;
       color: #ffffff;
       margin: 0;
+      padding: 0;
       display: flex;
       justify-content: center;
       align-items: center;
       min-height: 100vh;
     }
-    
+
+    /* Black out screen completely in Mic mode */
     body.mic-active {
       background-color: #000000;
     }
@@ -56,6 +58,8 @@
       margin: 8px 0;
       padding: 14px;
       text-align: left;
+      border-radius: 8px;
+      color: #fff;
     }
 
     .device-btn.active {
@@ -78,148 +82,219 @@
 </head>
 <body>
 
-  <!-- Mode Selection -->
+  <!-- Mode Selection View -->
   <div id="selection-view" class="container">
     <h2>Select Role</h2>
-    <p>Choose whether this device acts as an audio source or a receiver.</p>
-    <button onclick="startMic()">Mic (Transmitter)</button>
-    <button onclick="startListener()">Listener (Receiver)</button>
+    <p>Choose whether this device acts as an audio transmitter or listener.</p>
+    <button onclick="startMode('mic')">Mic (Transmitter)</button>
+    <button onclick="startMode('listener')">Listener (Receiver)</button>
   </div>
 
-  <!-- Mic Active View (Goes completely black) -->
+  <!-- Mic Active View (Blacked out) -->
   <div id="mic-view" class="hidden"></div>
 
   <!-- Listener View -->
   <div id="listener-view" class="container hidden">
-    <h2>Active Microphones</h2>
-    <p>Tap any device to switch streams:</p>
+    <h2>Available Microphones</h2>
+    <p>Select any device to listen live:</p>
     <div id="device-list">
-      <div class="status">Scanning for online mics...</div>
+      <div class="status">Connecting to Scaledrone signaling...</div>
     </div>
     <div id="connection-status" class="status">Not connected</div>
-    <audio id="audio-player" autoplay controls style="width: 100%; margin-top: 15px;"></audio>
+    <audio id="remoteAudio" autoplay controls style="width: 100%; margin-top: 15px;"></audio>
   </div>
 
   <script>
-    const HUB_ID = 'audio-hub-registry-room-scaledrone-alt';
-    let peer = null;
-    let localStream = null;
-    let currentCall = null;
-    let registeredMics = {};
+    const CHANNEL_ID = 'Sw5scfH0QXEhMUkf';
+    const ROOM_NAME = 'observable-audio-room';
 
-    // --- MIC MODE ---
-    async function startMic() {
+    const configuration = {
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+    };
+
+    let drone;
+    let room;
+    let role;
+    let localStream;
+    let pc;
+    let selectedMicTargetId = null;
+
+    function onError(error) {
+      console.error('Error:', error);
+    }
+
+    function sendMessage(message, targetId) {
+      drone.publish({
+        room: ROOM_NAME,
+        message: { ...message, target: targetId }
+      });
+    }
+
+    function startMode(selectedRole) {
+      role = selectedRole;
       document.getElementById('selection-view').classList.add('hidden');
-      document.body.classList.add('mic-active');
-      document.getElementById('mic-view').classList.remove('hidden');
 
-      try {
-        // Capture high-quality mic input
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-
-        const micId = 'mic-' + Math.floor(1000 + Math.random() * 9000);
-        const deviceName = `Microphone ${micId.replace('mic-', '')}`;
-        peer = new Peer(micId);
-
-        // Announce presence to the Hub/Listener network when connected
-        peer.on('open', () => {
-          const hubConn = peer.connect(HUB_ID);
-          hubConn.on('open', () => {
-            hubConn.send({ type: 'register', id: micId, name: deviceName });
-          });
-        });
-
-        // Answer incoming calls automatically from any switching listener
-        peer.on('call', (call) => {
-          call.answer(localStream);
-        });
-
-      } catch (err) {
-        alert('Microphone access denied or unassigned: ' + err.message);
+      if (role === 'mic') {
+        document.body.classList.add('mic-active');
+        document.getElementById('mic-view').classList.remove('hidden');
+        initMic();
+      } else {
+        document.getElementById('listener-view').classList.remove('hidden');
+        initListener();
       }
     }
 
-    // --- LISTENER MODE ---
-    function startListener() {
-      document.getElementById('selection-view').classList.add('hidden');
-      document.getElementById('listener-view').classList.remove('hidden');
+    // --- INITIALIZE SCALEDRONE SIGNALING SERVER ---
+    function initDrone(userData) {
+      drone = new ScaleDrone(CHANNEL_ID, { data: userData });
 
-      // The listener registers as the "Hub" to collect active mic IDs
-      peer = new Peer(HUB_ID);
+      drone.on('open', error => {
+        if (error) return onError(error);
 
-      peer.on('open', () => {
-        document.getElementById('connection-status').textContent = 'Listening for live mics...';
-      });
+        room = drone.subscribe(ROOM_NAME);
 
-      // Handle cases where the Hub ID is already occupied by another listener instance
-      peer.on('error', (err) => {
-        if (err.type === 'unavailable-id') {
-          peer = new Peer(); // Fallback to random ID
-        }
-      });
+        room.on('open', error => {
+          if (error) onError(error);
+        });
 
-      // Listen for incoming registrations from Mics
-      peer.on('connection', (conn) => {
-        conn.on('data', (data) => {
-          if (data.type === 'register') {
-            registeredMics[data.id] = data.name;
-            renderDeviceList();
+        // Track room members (for dynamic mic device listing)
+        room.on('members', members => {
+          if (role === 'listener') renderDeviceList(members);
+        });
+
+        room.on('member_join', () => {
+          if (role === 'listener') {
+            room.on('members', members => renderDeviceList(members));
           }
         });
+
+        room.on('member_leave', member => {
+          if (role === 'listener') {
+            if (member.id === selectedMicTargetId && pc) {
+              pc.close();
+              document.getElementById('connection-status').textContent = 'Selected Mic disconnected.';
+            }
+            room.on('members', members => renderDeviceList(members));
+          }
+        });
+
+        startListeningToSignals();
       });
     }
 
-    // Dynamic UI builder for switching mics
-    function renderDeviceList() {
+    // --- MIC MODE ---
+    function initMic() {
+      navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(stream => {
+        localStream = stream;
+        const micName = `Mic ${Math.floor(1000 + Math.random() * 9000)}`;
+        initDrone({ name: micName, type: 'mic' });
+      }).catch(err => {
+        alert('Microphone access denied: ' + err.message);
+      });
+    }
+
+    // --- LISTENER MODE ---
+    function initListener() {
+      initDrone({ name: 'Listener', type: 'listener' });
+    }
+
+    function renderDeviceList(members) {
       const listContainer = document.getElementById('device-list');
       listContainer.innerHTML = '';
 
-      const micIds = Object.keys(registeredMics);
+      const mics = members.filter(m => m.clientData && m.clientData.type === 'mic');
 
-      if (micIds.length === 0) {
+      if (mics.length === 0) {
         listContainer.innerHTML = '<div class="status">No active microphones found.</div>';
         return;
       }
 
-      micIds.forEach(id => {
+      mics.forEach(mic => {
         const btn = document.createElement('button');
         btn.className = 'device-btn';
-        btn.id = `btn-${id}`;
-        btn.textContent = `🎤 ${registeredMics[id]}`;
-        btn.onclick = () => switchStreamTo(id);
+        if (mic.id === selectedMicTargetId) btn.classList.add('active');
+        btn.textContent = `🎤 ${mic.clientData.name}`;
+        btn.onclick = () => connectToMic(mic.id, mic.clientData.name);
         listContainer.appendChild(btn);
       });
     }
 
-    // --- STREAM SWITCHING ENGINE ---
-    function switchStreamTo(targetMicId) {
-      // 1. Close current audio connection if one exists
-      if (currentCall) {
-        currentCall.close();
-      }
+    // --- WEBRTC CONNECTION SETUP ---
+    function connectToMic(targetId, name) {
+      if (pc) pc.close(); // Close existing WebRTC connection before switching
 
-      // Highlight active button in UI
-      document.querySelectorAll('.device-btn').forEach(btn => btn.classList.remove('active'));
-      const activeBtn = document.getElementById(`btn-${targetMicId}`);
-      if (activeBtn) activeBtn.classList.add('active');
+      selectedMicTargetId = targetId;
+      document.getElementById('connection-status').textContent = `Connecting to ${name}...`;
 
-      document.getElementById('connection-status').textContent = `Connecting to ${registeredMics[targetMicId]}...`;
+      // Unmute browser HTML5 audio element
+      const remoteAudio = document.getElementById('remoteAudio');
+      remoteAudio.play().catch(() => {});
 
-      // 2. Unlock HTML5 web audio context
-      const audioElement = document.getElementById('audio-player');
-      audioElement.play().catch(() => {});
+      // Create WebRTC Peer Connection
+      pc = new RTCPeerConnection(configuration);
 
-      // 3. Initiate new audio stream call to selected mic
-      currentCall = peer.call(targetMicId, new MediaStream());
+      pc.onicecandidate = event => {
+        if (event.candidate) {
+          sendMessage({ candidate: event.candidate }, targetId);
+        }
+      };
 
-      currentCall.on('stream', (remoteStream) => {
-        document.getElementById('connection-status').textContent = `Now playing: ${registeredMics[targetMicId]}`;
-        audioElement.srcObject = remoteStream;
-        audioElement.play();
-      });
+      pc.ontrack = event => {
+        remoteAudio.srcObject = event.streams[0];
+        document.getElementById('connection-status').textContent = `Streaming live from ${name}`;
+      };
 
-      currentCall.on('error', (err) => {
-        document.getElementById('connection-status').textContent = `Failed to connect: ${err.message}`;
+      // Create SDP Offer
+      pc.createOffer({ offerToReceiveAudio: true }).then(offer => {
+        return pc.setLocalDescription(offer);
+      }).then(() => {
+        sendMessage({ sdp: pc.localDescription }, targetId);
+      }).catch(onError);
+    }
+
+    // --- SIGNALING LISTENER ---
+    function startListeningToSignals() {
+      room.on('data', (message, client) => {
+        // Ignore own messages or messages meant for other peers
+        if (!client || client.id === drone.clientId) return;
+        if (message.target && message.target !== drone.clientId) return;
+
+        if (role === 'mic') {
+          // Mic receives SDP Offer from Listener
+          if (message.sdp && message.sdp.type === 'offer') {
+            if (pc) pc.close();
+
+            pc = new RTCPeerConnection(configuration);
+
+            pc.onicecandidate = event => {
+              if (event.candidate) {
+                sendMessage({ candidate: event.candidate }, client.id);
+              }
+            };
+
+            // Add local audio tracks to send to Listener
+            localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+            pc.setRemoteDescription(new RTCSessionDescription(message.sdp))
+              .then(() => pc.createAnswer())
+              .then(answer => pc.setLocalDescription(answer))
+              .then(() => {
+                sendMessage({ sdp: pc.localDescription }, client.id);
+              })
+              .catch(onError);
+
+          } else if (message.candidate) {
+            pc.addIceCandidate(new RTCIceCandidate(message.candidate), () => {}, onError);
+          }
+
+        } else if (role === 'listener') {
+          // Listener receives SDP Answer back from Mic
+          if (message.sdp && message.sdp.type === 'answer') {
+            pc.setRemoteDescription(new RTCSessionDescription(message.sdp), () => {}, onError);
+          } else if (message.candidate && pc) {
+            pc.addIceCandidate(new RTCIceCandidate(message.candidate), () => {}, onError);
+          }
+        }
       });
     }
   </script>
